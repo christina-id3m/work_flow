@@ -1,0 +1,62 @@
+name: Deploy to eu-meet
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.XHMI_SSH_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H meet.xhmi.com >> ~/.ssh/known_hosts
+
+    - name: Deploy via SSH
+      run: |
+        ssh -i ~/.ssh/id_rsa root@meet.xhmi.com << 'EOF'
+        set -e
+
+        echo "Changing directory..."
+        cd /opt/plugnmeet/meet/
+
+        echo "Setting up Node environment..."
+        export NVM_DIR="$HOME/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+        nvm use 23.1.8
+
+        echo "Pulling latest code..."
+        git pull
+        node -v
+        hostname
+        pwd
+
+        echo "Installing dependencies..."
+        npm install
+
+        echo "Building project..."
+        npm run build  pnpm 
+
+        COMMIT_ID=$(git rev-parse --short HEAD)
+        echo "Archiving existing dist as dist.$COMMIT_ID..."
+        mv /opt/plugnmeet/client/dist /opt/plugnmeet/client/dist.$COMMIT_ID
+
+        echo "Moving new build to client dist..."
+        cp -r /opt/plugnmeet/meet/dist /opt/plugnmeet/client/
+
+        echo "Listing client/dist contents..."
+        ls -la /opt/plugnmeet/client/dist/
+        cat /opt/plugnmeet/config.js > /opt/plugnmeet/client/dist/assets/config.js
+
+        echo "Restarting plugnmeet service..."
+        systemctl restart plugnmeet
+
+        echo "Waiting for service to stabilize..."
+        sleep 5
+
+        echo "Docker Compose status:"
+        docker compose ps
+        EOF
